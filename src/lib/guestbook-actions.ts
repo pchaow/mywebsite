@@ -2,10 +2,10 @@
 
 import { revalidatePath } from "next/cache";
 import { PORTFOLIO_DATA, Testimonial } from "@/data/portfolio-data";
-import { isSupabaseConfigured, supabase, GuestbookMessageRecord } from "@/lib/supabase";
+import { getSupabase, GuestbookMessageRecord } from "@/lib/supabase";
 import { sendInstantNotification } from "@/lib/notifications";
 
-// In-memory fallback storage ONLY when Supabase is not configured
+// Fallback storage ONLY when Supabase credentials are missing
 let memoryMessages: GuestbookMessageRecord[] = PORTFOLIO_DATA.initialTestimonials.map(
   (t) => ({
     id: t.id,
@@ -21,7 +21,9 @@ let memoryMessages: GuestbookMessageRecord[] = PORTFOLIO_DATA.initialTestimonial
 );
 
 export async function getApprovedTestimonials(): Promise<Testimonial[]> {
-  if (isSupabaseConfigured && supabase) {
+  const supabase = getSupabase();
+
+  if (supabase) {
     try {
       const { data, error } = await supabase
         .from("guestbook_messages")
@@ -32,7 +34,7 @@ export async function getApprovedTestimonials(): Promise<Testimonial[]> {
         .order("created_at", { ascending: false });
 
       if (error) {
-        console.error("Supabase select error:", error);
+        console.error("Supabase getApprovedTestimonials error:", error);
       } else if (data) {
         return data.map((d) => ({
           id: d.id,
@@ -49,7 +51,7 @@ export async function getApprovedTestimonials(): Promise<Testimonial[]> {
         }));
       }
     } catch (e) {
-      console.warn("Supabase fetch failed, using fallback memory", e);
+      console.warn("Supabase fetch failed", e);
     }
   }
 
@@ -83,6 +85,8 @@ export async function submitGuestbookMessage(formData: {
     return { success: false, error: "Name and Message are required." };
   }
 
+  const supabase = getSupabase();
+
   const newMessage: GuestbookMessageRecord = {
     id: `msg-${Date.now()}`,
     name: formData.name.trim(),
@@ -95,7 +99,7 @@ export async function submitGuestbookMessage(formData: {
     created_at: new Date().toISOString(),
   };
 
-  if (isSupabaseConfigured && supabase) {
+  if (supabase) {
     try {
       const { error } = await supabase.from("guestbook_messages").insert([
         {
@@ -108,6 +112,7 @@ export async function submitGuestbookMessage(formData: {
           pinned: newMessage.pinned,
         },
       ]);
+
       if (error) {
         console.error("Supabase insert error:", error);
         return { success: false, error: error.message };
@@ -152,7 +157,9 @@ export async function getAdminMessages(passcode: string): Promise<{
     return { success: false, error: "Invalid Admin Passcode." };
   }
 
-  if (isSupabaseConfigured && supabase) {
+  const supabase = getSupabase();
+
+  if (supabase) {
     try {
       const { data, error } = await supabase
         .from("guestbook_messages")
@@ -183,7 +190,9 @@ export async function moderateMessageAction(
     return { success: false, error: "Unauthorized access." };
   }
 
-  if (isSupabaseConfigured && supabase) {
+  const supabase = getSupabase();
+
+  if (supabase) {
     try {
       if (action === "delete") {
         await supabase.from("guestbook_messages").delete().eq("id", messageId);
