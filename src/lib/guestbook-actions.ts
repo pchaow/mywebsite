@@ -1,10 +1,11 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
 import { PORTFOLIO_DATA, Testimonial } from "@/data/portfolio-data";
 import { isSupabaseConfigured, supabase, GuestbookMessageRecord } from "@/lib/supabase";
 import { sendInstantNotification } from "@/lib/notifications";
 
-// In-memory / Fallback storage for demonstration when Supabase is not connected
+// In-memory fallback storage ONLY when Supabase is not configured
 let memoryMessages: GuestbookMessageRecord[] = PORTFOLIO_DATA.initialTestimonials.map(
   (t) => ({
     id: t.id,
@@ -30,7 +31,9 @@ export async function getApprovedTestimonials(): Promise<Testimonial[]> {
         .order("pinned", { ascending: false })
         .order("created_at", { ascending: false });
 
-      if (data && !error) {
+      if (error) {
+        console.error("Supabase select error:", error);
+      } else if (data) {
         return data.map((d) => ({
           id: d.id,
           name: d.name,
@@ -107,14 +110,16 @@ export async function submitGuestbookMessage(formData: {
       ]);
       if (error) {
         console.error("Supabase insert error:", error);
+        return { success: false, error: error.message };
       }
-    } catch (err) {
+    } catch (err: any) {
       console.warn("Supabase insert exception:", err);
+      return { success: false, error: err?.message || "Database insert error" };
     }
+  } else {
+    // Save to memory store if no Supabase
+    memoryMessages.unshift(newMessage);
   }
-
-  // Save to memory store
-  memoryMessages.unshift(newMessage);
 
   // Send instant webhook notification (Telegram/Discord)
   await sendInstantNotification({
@@ -125,13 +130,15 @@ export async function submitGuestbookMessage(formData: {
     email: newMessage.email,
   });
 
+  revalidatePath("/");
+
   return {
     success: true,
     visibility: formData.visibility,
     message:
       formData.visibility === "private"
-        ? "ข้อความลับของคุณถูกส่งถึงคุณเชาวน์เรียบร้อยแล้ว (เฉพาะเจ้าของเว็บเท่านั้นที่มองเห็น)"
-        : "ขอบคุณสำหรับข้อความ! ข้อความของคุณถูกบันทึกและจะแสดงบน Wall of Love เมื่อได้รับการอนุมัติ",
+        ? "ข้อความลับของคุณถูกส่งตรงถึงคุณเชาวน์เรียบร้อยแล้ว (เฉพาะเจ้าของเว็บเท่านั้นที่มองเห็น)"
+        : "ขอบคุณสำหรับข้อความ! ข้อความของคุณถูกบันทึกสู่ฐานข้อมูล และจะแสดงบน Wall of Love เมื่อได้รับการอนุมัติ",
   };
 }
 
@@ -155,6 +162,9 @@ export async function getAdminMessages(passcode: string): Promise<{
       if (data && !error) {
         return { success: true, messages: data };
       }
+      if (error) {
+        console.error("Supabase admin fetch error:", error);
+      }
     } catch (e) {
       console.warn("Supabase admin fetch failed", e);
     }
@@ -173,24 +183,6 @@ export async function moderateMessageAction(
     return { success: false, error: "Unauthorized access." };
   }
 
-  const targetIdx = memoryMessages.findIndex((m) => m.id === messageId);
-  if (targetIdx !== -1) {
-    if (action === "approve") {
-      memoryMessages[targetIdx].status = "approved";
-      memoryMessages[targetIdx].visibility = "public";
-    } else if (action === "make_private") {
-      memoryMessages[targetIdx].visibility = "private";
-    } else if (action === "pin") {
-      memoryMessages[targetIdx].pinned = true;
-    } else if (action === "unpin") {
-      memoryMessages[targetIdx].pinned = false;
-    } else if (action === "reject") {
-      memoryMessages[targetIdx].status = "rejected";
-    } else if (action === "delete") {
-      memoryMessages.splice(targetIdx, 1);
-    }
-  }
-
   if (isSupabaseConfigured && supabase) {
     try {
       if (action === "delete") {
@@ -198,28 +190,52 @@ export async function moderateMessageAction(
       } else if (action === "approve") {
         await supabase
           .from("guestbook_messages")
-          .update({ status: "approved", visibility: "public" })
+          .update({ status: "approved", visibility: "public", updated_at: new Date().toISOString() })
           .eq("id", messageId);
       } else if (action === "make_private") {
         await supabase
           .from("guestbook_messages")
-          .update({ visibility: "private" })
+          .update({ visibility: "private", updated_at: new Date().toISOString() })
           .eq("id", messageId);
       } else if (action === "pin") {
         await supabase
           .from("guestbook_messages")
-          .update({ pinned: true })
+          .update({ pinned: true, updated_at: new Date().toISOString() })
           .eq("id", messageId);
       } else if (action === "unpin") {
         await supabase
           .from("guestbook_messages")
-          .update({ pinned: false })
+          .update({ pinned: false, updated_at: new Date().toISOString() })
+          .eq("id", messageId);
+      } else if (action === "reject") {
+        await supabase
+          .from("guestbook_messages")
+          .update({ status: "rejected", updated_at: new Date().toISOString() })
           .eq("id", messageId);
       }
     } catch (e) {
       console.warn("Supabase moderation update failed", e);
     }
+  } else {
+    const targetIdx = memoryMessages.findIndex((m) => m.id === messageId);
+    if (targetIdx !== -1) {
+      if (action === "approve") {
+        memoryMessages[targetIdx].status = "approved";
+        memoryMessages[targetIdx].visibility = "public";
+      } else if (action === "make_private") {
+        memoryMessages[targetIdx].visibility = "private";
+      } else if (action === "pin") {
+        memoryMessages[targetIdx].pinned = true;
+      } else if (action === "unpin") {
+        memoryMessages[targetIdx].pinned = false;
+      } else if (action === "reject") {
+        memoryMessages[targetIdx].status = "rejected";
+      } else if (action === "delete") {
+        memoryMessages.splice(targetIdx, 1);
+      }
+    }
   }
 
+  revalidatePath("/");
   return { success: true };
 }

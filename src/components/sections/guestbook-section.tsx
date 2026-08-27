@@ -8,12 +8,11 @@ import {
   Pin,
   Lock,
   Globe,
-  CheckCircle2,
   Sparkles,
   ShieldCheck,
-  UserCheck,
   MessageSquare,
   Clock,
+  Loader2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -29,33 +28,33 @@ import {
 } from "@/components/ui/card";
 import { toast } from "sonner";
 import { submitGuestbookMessage, getApprovedTestimonials } from "@/lib/guestbook-actions";
-import { Testimonial, PORTFOLIO_DATA } from "@/data/portfolio-data";
+import { Testimonial } from "@/data/portfolio-data";
 
 export function GuestbookSection() {
-  const [testimonials, setTestimonials] = React.useState<Testimonial[]>(
-    PORTFOLIO_DATA.initialTestimonials
-  );
+  const [testimonials, setTestimonials] = React.useState<Testimonial[]>([]);
+  const [isLoading, setIsLoading] = React.useState<boolean>(true);
   const [name, setName] = React.useState("");
   const [role, setRole] = React.useState("");
   const [email, setEmail] = React.useState("");
   const [message, setMessage] = React.useState("");
   const [visibility, setVisibility] = React.useState<"public" | "private">("public");
   const [isSubmitting, setIsSubmitting] = React.useState(false);
-  const [turnstileVerified, setTurnstileVerified] = React.useState(true);
+
+  const fetchTestimonials = React.useCallback(async () => {
+    try {
+      setIsLoading(true);
+      const data = await getApprovedTestimonials();
+      setTestimonials(data || []);
+    } catch (err) {
+      console.error("Failed to load testimonials:", err);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
 
   React.useEffect(() => {
-    async function loadTestimonials() {
-      try {
-        const data = await getApprovedTestimonials();
-        if (data && data.length > 0) {
-          setTestimonials(data);
-        }
-      } catch (err) {
-        console.error("Failed to load testimonials:", err);
-      }
-    }
-    loadTestimonials();
-  }, []);
+    fetchTestimonials();
+  }, [fetchTestimonials]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -84,6 +83,9 @@ export function GuestbookSection() {
         setRole("");
         setEmail("");
         setMessage("");
+
+        // Refresh list
+        await fetchTestimonials();
       } else {
         toast.error(res.error || "เกิดข้อผิดพลาดในการส่งข้อความ");
       }
@@ -107,11 +109,11 @@ export function GuestbookSection() {
             Guestbook & Recommendations
           </h2>
           <p className="text-sm sm:text-base text-muted-foreground font-thai max-w-3xl">
-            สมุดเยี่ยมชม คำนิยมจากเพื่อนร่วมงาน และช่องทางส่งข้อความส่วนตัวถึงคุณเชาวน์ (รองรับการฝากข้อความลับเฉพาะเจ้าของเว็บ)
+            สมุดเยี่ยมชม คำนิยมจากเพื่อนร่วมงาน และช่องทางส่งข้อความส่วนตัวถึงคุณเชาวน์ (ข้อมูลเชื่อมต่อฐานข้อมูล Supabase PostgreSQL แบบ Real-time)
           </p>
         </div>
 
-        {/* 2-Column Layout: Form on Left/Top, Wall of Love on Right/Bottom */}
+        {/* 2-Column Layout */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
           {/* Left Column: Form */}
           <div className="lg:col-span-5">
@@ -233,7 +235,7 @@ export function GuestbookSection() {
                     </div>
                   </div>
 
-                  {/* Cloudflare Turnstile Anti-spam Badge */}
+                  {/* Anti-spam Badge */}
                   <div className="flex items-center justify-between rounded-lg bg-muted/40 p-2.5 border border-border/50 text-[11px] text-muted-foreground">
                     <div className="flex items-center gap-2">
                       <ShieldCheck className="h-4 w-4 text-emerald-500" />
@@ -252,7 +254,7 @@ export function GuestbookSection() {
                     disabled={isSubmitting || !name.trim() || !message.trim()}
                   >
                     <Send className="h-3.5 w-3.5" />
-                    <span>{isSubmitting ? "กำลังส่งข้อความ..." : "ส่งข้อความ (Send Message)"}</span>
+                    <span>{isSubmitting ? "กำลังบันทึกข้อมูล..." : "ส่งข้อความ (Send Message)"}</span>
                   </Button>
                 </CardFooter>
               </form>
@@ -267,65 +269,86 @@ export function GuestbookSection() {
                 Wall of Love ({testimonials.length})
               </h3>
               <span className="text-xs text-muted-foreground font-thai">
-                คำนิยมและข้อความที่ได้รับการอนุมัติ
+                ดึงข้อมูลจริงจาก Supabase Database
               </span>
             </div>
 
-            <div className="space-y-4">
-              {testimonials.map((item, idx) => (
-                <motion.div
-                  key={item.id}
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.3, delay: idx * 0.05 }}
-                >
-                  <Card
-                    className={`border transition-all duration-300 ${
-                      item.pinned
-                        ? "border-amber-500/50 bg-gradient-to-br from-card to-amber-500/5 shadow-md"
-                        : "border-border/60 bg-card hover:border-border hover:shadow-xs"
-                    }`}
+            {isLoading ? (
+              <div className="flex flex-col items-center justify-center p-12 rounded-xl border border-dashed text-muted-foreground space-y-2">
+                <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                <span className="text-xs font-thai">กำลังดึงข้อมูลจากฐานข้อมูล Supabase...</span>
+              </div>
+            ) : testimonials.length === 0 ? (
+              <Card className="p-8 text-center text-muted-foreground space-y-3 border-dashed">
+                <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary">
+                  <Sparkles className="h-5 w-5" />
+                </div>
+                <div className="space-y-1">
+                  <p className="text-sm font-semibold text-foreground font-thai">
+                    ยังไม่มีข้อความบน Wall of Love ในขณะนี้
+                  </p>
+                  <p className="text-xs font-thai">
+                    ร่วมเป็นคนแรกที่เขียนคำนิยมหรือทักทายคุณเชาวน์ผ่านแบบฟอร์มด้านซ้ายได้เลยครับ!
+                  </p>
+                </div>
+              </Card>
+            ) : (
+              <div className="space-y-4">
+                {testimonials.map((item, idx) => (
+                  <motion.div
+                    key={item.id}
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.3, delay: idx * 0.05 }}
                   >
-                    <CardHeader className="pb-2 space-y-1">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="space-y-0.5">
-                          <div className="flex items-center gap-2">
-                            <span className="font-bold text-sm text-foreground font-thai">
-                              {item.name}
-                            </span>
-                            {item.pinned && (
-                              <Badge
-                                variant="outline"
-                                className="border-amber-500/40 text-amber-600 dark:text-amber-400 text-[10px] gap-1 py-0"
-                              >
-                                <Pin className="h-2.5 w-2.5" />
-                                Pinned Recommendation
-                              </Badge>
+                    <Card
+                      className={`border transition-all duration-300 ${
+                        item.pinned
+                          ? "border-amber-500/50 bg-gradient-to-br from-card to-amber-500/5 shadow-md"
+                          : "border-border/60 bg-card hover:border-border hover:shadow-xs"
+                      }`}
+                    >
+                      <CardHeader className="pb-2 space-y-1">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="space-y-0.5">
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-sm text-foreground font-thai">
+                                {item.name}
+                              </span>
+                              {item.pinned && (
+                                <Badge
+                                  variant="outline"
+                                  className="border-amber-500/40 text-amber-600 dark:text-amber-400 text-[10px] gap-1 py-0"
+                                >
+                                  <Pin className="h-2.5 w-2.5" />
+                                  Pinned Recommendation
+                                </Badge>
+                              )}
+                            </div>
+                            {item.role && (
+                              <div className="text-xs text-muted-foreground font-thai">
+                                {item.role}
+                              </div>
                             )}
                           </div>
-                          {item.role && (
-                            <div className="text-xs text-muted-foreground font-thai">
-                              {item.role}
-                            </div>
-                          )}
+
+                          <span className="text-[11px] font-mono text-muted-foreground shrink-0 flex items-center gap-1">
+                            <Clock className="h-3 w-3" />
+                            {item.date}
+                          </span>
                         </div>
+                      </CardHeader>
 
-                        <span className="text-[11px] font-mono text-muted-foreground shrink-0 flex items-center gap-1">
-                          <Clock className="h-3 w-3" />
-                          {item.date}
-                        </span>
-                      </div>
-                    </CardHeader>
-
-                    <CardContent>
-                      <p className="text-xs sm:text-sm text-foreground/90 font-thai leading-relaxed italic">
-                        "{item.message}"
-                      </p>
-                    </CardContent>
-                  </Card>
-                </motion.div>
-              ))}
-            </div>
+                      <CardContent>
+                        <p className="text-xs sm:text-sm text-foreground/90 font-thai leading-relaxed italic">
+                          "{item.message}"
+                        </p>
+                      </CardContent>
+                    </Card>
+                  </motion.div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </div>
